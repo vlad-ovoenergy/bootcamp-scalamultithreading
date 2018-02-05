@@ -1,7 +1,6 @@
 import java.time.Instant
 
 import akka.actor.{Actor, ActorSystem, Props}
-import akka.pattern.ask
 import akka.util.Timeout
 
 import scala.concurrent.ExecutionContext
@@ -33,13 +32,14 @@ class Event(val eventType: String, val siteId: Int, val value: Double, val time:
 
 
 class LoggingActor(implicit ec:ExecutionContext) extends Actor {
+  import IC._
   implicit val timeout = Timeout.durationToTimeout(5 seconds)
 
   val myChild = context.actorOf(Props[EventEnricher])
 
   override def receive: Receive = {
     case e: Event => {
-        myChild ? e onComplete {
+        myChild heyWhatsMySite e onComplete {
         case Success(site) =>     println(s"${e.time} : SITE_ID ${site} - Log of ${e.eventType} type and value is ${e.value}")
         case Failure(f) => println(s"Something bad has happened: $f")
     }
