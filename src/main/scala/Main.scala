@@ -10,8 +10,10 @@ object Main extends App {
  val props = Props[LoggingActor]
  val loggingActor = system.actorOf(props)
 
- val str = Stream.continually({Thread.sleep((Math.random() * 1000).toLong); EventGenerator.generate()}).take(300).foreach(msg => loggingActor log msg )
-
+ val str = Stream.continually(
+   {Thread.sleep((Math.random() * 1000).toLong); EventGenerator.generate()})
+//   .take(300)
+   .foreach(loggingActor log _)
 }
 
 class Event(val eventType: String, val siteId: Int, val value: Double, val time: Instant)
