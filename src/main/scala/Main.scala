@@ -1,24 +1,26 @@
 import java.time.Instant
 
 import akka.actor.{Actor, ActorSystem, Props}
+import akka.pattern.ask
+import akka.util.Timeout
 
-import scala.util.Success
+import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
+import scala.util.{Failure, Success}
 
 object Main extends App {
 
  import IC._
 
- val system = ActorSystem("BadSystem")
- val props = Props[LoggingActor]
- val loggingActor = system.actorOf(props)
- implicit val ec = system.dispatcher
+  val system = ActorSystem("BadSystem")
+  implicit val ec : ExecutionContext = system.dispatcher
 
+  val props = Props(new LoggingActor()(ec))
+  val loggingActor = system.actorOf(props)
 
- val str = Stream.continually(
-   {Thread.sleep((Math.random() * 1000).toLong); EventGenerator.generate()})
-   .take(300)
-   .foreach(loggingActor log _)
-
+  val str = Stream.continually({Thread.sleep((Math.random() * 1000).toLong); EventGenerator.generate()})
+    .take(20)
+    .foreach(loggingActor log _)
 
   system.terminate() onComplete {
     case Success(any) => println("Terminated")
@@ -27,14 +29,21 @@ object Main extends App {
 
 }
 
-
 class Event(val eventType: String, val siteId: Int, val value: Double, val time: Instant)
 
 
-class LoggingActor extends Actor {
+class LoggingActor(implicit ec:ExecutionContext) extends Actor {
+  implicit val timeout = Timeout.durationToTimeout(5 seconds)
+
   val myChild = context.actorOf(Props[EventEnricher])
- override def receive: Receive = {
-  case e: Event => myChild ! e
+
+  override def receive: Receive = {
+    case e: Event => {
+        myChild ? e onComplete {
+        case Success(site) =>     println(s"${e.time} : SITE_ID ${site} - Log of ${e.eventType} type and value is ${e.value}")
+        case Failure(f) => println(s"Something bad has happened: $f")
+    }
+  }
  }
 }
 
@@ -54,7 +63,7 @@ class EventEnricher extends Actor {
   )
 
   override def receive: Receive = {
-    case e: Event => println(s"${e.time} : SITE_ID ${sites(e.siteId)} - Log of ${e.eventType} type and value is ${e.value}")
+    case e: Event => sender ! sites(e.siteId)
   }
 }
 
