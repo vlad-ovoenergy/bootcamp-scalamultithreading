@@ -1,11 +1,11 @@
 import java.time.Instant
 
-import akka.actor.{Actor, ActorSystem, Props}
-import akka.util.Timeout
+import akka.actor.SupervisorStrategy.{Escalate, Restart, Resume, Stop}
+import akka.actor.{Actor, ActorRef, ActorSystem, OneForOneStrategy, Props, Terminated}
 
 import scala.concurrent.ExecutionContext
+import scala.util.Success
 import scala.concurrent.duration._
-import scala.util.{Failure, Success}
 
 object Main extends App {
 
@@ -14,7 +14,7 @@ object Main extends App {
   val system = ActorSystem("BadSystem")
   implicit val ec : ExecutionContext = system.dispatcher
 
-  val props = Props(new LoggingActor()(ec))
+  val props = Props(new LoggingRouterActor()(ec))
   val loggingActor = system.actorOf(props)
 
   val str = Stream.continually({Thread.sleep((Math.random() * 1000).toLong); EventGenerator.generate()})
@@ -31,23 +31,42 @@ object Main extends App {
 class Event(val eventType: String, val siteId: Int, val value: Double, val time: Instant)
 
 
-class LoggingActor(implicit ec:ExecutionContext) extends Actor {
-  import IC._
-  implicit val timeout = Timeout.durationToTimeout(5 seconds)
+class LoggingRouterActor(implicit ec:ExecutionContext) extends Actor {
 
-  val myChild = context.actorOf(Props[EventEnricher])
-
-  override def receive: Receive = {
-    case e: Event => {
-        myChild heyWhatsMySite e onComplete {
-        case Success(site) =>     println(s"${e.time} : SITE_ID ${site} - Log of ${e.eventType} type and value is ${e.value}")
-        case Failure(f) => println(s"Something bad has happened: $f")
-    }
+  var router: Vector[ActorRef] = Vector.fill(3){
+    val r = context.actorOf(Props[EventEnricher])
+    println("creating initial actor")
+    context watch r
+    r
   }
- }
+
+  var i = 0
+
+  override val supervisorStrategy =
+    OneForOneStrategy(maxNrOfRetries = 0, withinTimeRange = 10 minute) {
+      case _: ArithmeticException      ⇒ Stop
+      case _: NullPointerException     ⇒ Stop
+      case _: IllegalArgumentException ⇒ Stop
+      case _: Exception                ⇒ Stop
+    }
+
+  override def receive : Receive = {
+    case e: Event => {
+      val ref = router(i % router.length)
+      i = i + 1
+      ref ! e
+    }
+    case Terminated(a) =>
+      println("Creating a new actor")
+      router = router.filter(_ != a)
+      val r = context.actorOf(Props[EventEnricher])
+      context watch r
+      router = router :+ r
+  }
 }
 
 class EventEnricher extends Actor {
+  val creationTime = Instant.now().toEpochMilli % 3
   val sites = Map(
     0 -> "site number 0",
     1 -> "site number 1",
@@ -63,7 +82,8 @@ class EventEnricher extends Actor {
   )
 
   override def receive: Receive = {
-    case e: Event => sender ! sites(e.siteId)
+    case e: Event if creationTime != 1 =>  println(s"${context.self.path.name} - ${e.time} : SITE_ID ${sites(e.siteId)} - Log of ${e.eventType} type and value is ${e.value}")
+    case _ => throw new IllegalArgumentException()
   }
 }
 
